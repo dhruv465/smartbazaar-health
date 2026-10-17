@@ -1,0 +1,36 @@
+name: Render health
+
+on:
+  schedule:
+    - cron: '*/10 * * * *'
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: render-health
+  cancel-in-progress: true
+
+jobs:
+  health:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Check deployed app
+        shell: bash
+        run: |
+          set -euo pipefail
+          metrics="$(curl --silent --show-error --connect-timeout 10 --max-time 90 \
+            --output "$RUNNER_TEMP/render-health.json" \
+            --write-out '%{http_code} %{time_total}' \
+            https://smartbazaar-demo.onrender.com/health)"
+          read -r status elapsed <<< "$metrics"
+          echo "HTTP $status in ${elapsed}s"
+          if [[ "$status" != "200" ]]; then
+            echo "::error::Health endpoint returned HTTP $status"
+            exit 1
+          fi
+          # A Render startup page can be HTTP 200 before the app is ready.
+          jq --exit-status '.status == "ok" and .agent_ready == true' \
+            "$RUNNER_TEMP/render-health.json" > /dev/null
+          echo "Health passed in ${elapsed}s" >> "$GITHUB_STEP_SUMMARY"
